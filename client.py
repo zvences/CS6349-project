@@ -3,19 +3,19 @@
 import socket
 from OpenSSL import crypto
 
-def verify():
-    with open('./server-cert.pem', 'r') as server_cert_file:
+def verify(file):
+    with open('./'+file, 'r') as server_cert_file:
         server_cert = server_cert_file.read()
 
     with open('./ca-cert.pem', 'r') as ca_cert_file:
-        ca_cert = ca_cert_file .read()
+        ca_cert = ca_cert_file.read()
 
     verified = verify_chain_of_trust(server_cert, ca_cert)
 
     if verified:
-        print('Certificate verified')
+        print('*Certificate verified*')
     else:
-        print('Certificate not verified')
+        print('*Certificate not verified*')
 
 
 def verify_chain_of_trust(server_pem, ca_cert_pem):
@@ -44,20 +44,43 @@ def verify_chain_of_trust(server_pem, ca_cert_pem):
         return False
 
 
-HOST = '127.0.0.1'  # The server's hostname or IP address
-PORT = 65432        # The port used by the server
-def connect():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((HOST, PORT))
-        s.sendall(b'Hello, world')
-        s.sendall(b' one two')
-        data = s.recv(1024)
+HOST = '127.0.0.1'  # server IP address
+PORT = 65432        # server port
+# def connect():
+#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+#         s.connect((HOST, PORT))
+#         s.sendall(b'Send server-req.pem')
+#         s.sendall(b' one two')
+#         data = s.recv(1024)
 
-    print('Received', repr(data))
+#     print('Received .', repr(data),'.')
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect((HOST, PORT))
+file_name = 'ser-cert.pem'
+
+s.send(b'Certificate request')
+print("Sent: Certificate request")
+
+print("...")
+with open(file_name, 'wb') as fw:
+    while True:
+        data = s.recv(1024)
+        if not data:
+            break
+        fw.write(data)
+    fw.close()
+print("Received: Certificate")
+
+# with open("./client-pubkey.pem") as f:
+#     contents = f.read()
+# print("********",contents)
+#clprivkey = crypto.load_publickey(crypto.FILETYPE_PEM, contents)
+#print(clprivkey)
 
 def main():
-    verify()
-    connect()
+    verify(file_name)
+    #connect()
 
 
 if __name__ == "__main__":
