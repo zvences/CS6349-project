@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
 
 import socket
+import sys
 from OpenSSL import crypto
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+import struct
+from Crypto.PublicKey import RSA
+import uuid
+
+HOST = '127.0.0.1'  # server IP address
+PORT = 65432        # server port
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect((HOST, PORT))
 
 def verify(file):
+    # verify received certificate
     with open('./'+file, 'r') as server_cert_file:
         server_cert = server_cert_file.read()
 
@@ -13,13 +27,13 @@ def verify(file):
     verified = verify_chain_of_trust(server_cert, ca_cert)
 
     if verified:
-        print('*Certificate verified*')
+        print('\t*Certificate verified*')
     else:
-        print('*Certificate not verified*')
+        print('\t*Certificate not verified*')
 
 
 def verify_chain_of_trust(server_pem, ca_cert_pem):
-
+    # verify certificate chain of trust
     certificate = crypto.load_certificate(crypto.FILETYPE_PEM, server_pem)
 
     # Create and fill a X509Store with trusted certs
@@ -44,44 +58,98 @@ def verify_chain_of_trust(server_pem, ca_cert_pem):
         return False
 
 
-HOST = '127.0.0.1'  # server IP address
-PORT = 65432        # server port
-# def connect():
-#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-#         s.connect((HOST, PORT))
-#         s.sendall(b'Send server-req.pem')
-#         s.sendall(b' one two')
-#         data = s.recv(1024)
+def receive(channel):
+    try:
+        msg = b''
+        size = struct.unpack("i", channel.recv(struct.calcsize("i")))[0]
+        data = ""
+        while len(data) < size:
+            msg = channel.recv(size - len(data))
+            if not msg:
+                return None
+            data += msg.decode('utf-8')
+        return msg
+    except OSError as e:
+        print (e)
+        return False
+def send( connection, message ):
+    try:
+        connection.send(struct.pack("i", len(message)) + message)
+        return True
+    except OSError as e:
+        print (e)
+        return False
 
-#     print('Received .', repr(data),'.')
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect((HOST, PORT))
-file_name = 'ser-cert.pem'
 
-s.send(b'Certificate request')
-print("Sent: Certificate request")
+with open("server-pubkey.pem", "rb") as key_file:
+    public_key = serialization.load_pem_public_key(
+        key_file.read(),
+        backend=default_backend()
+    )
 
-print("...")
-with open(file_name, 'wb') as fw:
-    while True:
-        data = s.recv(1024)
-        if not data:
-            break
-        fw.write(data)
-    fw.close()
-print("Received: Certificate")
+with open("server-keyout.pem", "rb") as key_file:
+    private_key = serialization.load_pem_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+    )
 
-# with open("./client-pubkey.pem") as f:
-#     contents = f.read()
-# print("********",contents)
-#clprivkey = crypto.load_publickey(crypto.FILETYPE_PEM, contents)
-#print(clprivkey)
+message = b'encrypt me!'
 
-def main():
-    verify(file_name)
-    #connect()
+encrypted = public_key.encrypt(
+    message,
+    padding.OAEP(
+        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+        algorithm=hashes.SHA256(),
+        label=None
+    )
+)
+original_message = private_key.decrypt(
+        encrypted,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+print("#######:",original_message)
 
+def DH_handshake(key):
+    # acquire session key
+    session_key = b''
+    pub_key = RSA.importkey(key)
+    rsa_key = crypto.PKCS12
+
+    return session_key
 
 if __name__ == "__main__":
-    main()
+    
+    file_name = 'ser-cert.pem'
+    
+    # Authentication
+    send(s, b'Certificate request')
+    print("Sent: Certificate request")
+
+    print("...")
+    with open(file_name, 'wb') as fw:
+        while True:
+            data = receive(s)
+            if not data:
+                break
+            fw.write(data)
+        fw.close()
+    print("Received: Certificate")
+
+    verify(file_name)
+
+
+    print("Starting DH Handshake")
+
+    send(s, b"DH Start")
+
+    s.send(encrypted)
+
+    endMsg = b'close'
+    send(s, b'close')
+    print('-Closing Connection-')
