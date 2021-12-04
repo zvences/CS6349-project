@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 
+import os
 import socket
-import sys
 from OpenSSL import crypto
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-import struct
 from Crypto.PublicKey import RSA
-import uuid
+from Crypto.Util.strxor import strxor
+from Crypto.Random import get_random_bytes
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Hash import SHA256
+import struct
+
 
 HOST = '127.0.0.1'  # server IP address
 PORT = 65432        # server port
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((HOST, PORT))
+
+session_key = b''
+session_hash = b''
+
+client_seq = 0
+server_seq = 0
 
 def verify(file):
     # verify received certificate
@@ -81,47 +91,218 @@ def send( connection, message ):
         return False
 
 
+def encrypt_and_hash(data, key, hash_key):
+    # encrypt data to maintain confidentiality
+    #  and hash to maintain integrity
+    if(len(data) != 32):
+        data = pad(data, 32)
+    encr = strxor(SHA256.new(key).digest(),data)
+    hashed = SHA256.new(data+hash_key).digest()
 
-with open("server-pubkey.pem", "rb") as key_file:
-    public_key = serialization.load_pem_public_key(
-        key_file.read(),
-        backend=default_backend()
-    )
+    return encr+hashed
 
-with open("server-keyout.pem", "rb") as key_file:
-    private_key = serialization.load_pem_private_key(
-        key_file.read(),
-        password=None,
-        backend=default_backend()
-    )
+def decrypt_and_verify(data, key, hash_key):
+    # decrypts value and checks hash value to verify integrity
+    #  returns decrypted data
+    hashed = data[32:]
+    data = data[:32]
+    decrypted_data = strxor(SHA256.new(key).digest(),data)
 
-message = b'encrypt me!'
+    hash_integrity = SHA256.new(decrypted_data+hash_key).digest()
 
-encrypted = public_key.encrypt(
-    message,
-    padding.OAEP(
-        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-        algorithm=hashes.SHA256(),
-        label=None
-    )
-)
-original_message = private_key.decrypt(
-        encrypted,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-print("#######:",original_message)
+    if not (hash_integrity == hashed):
+        print("Message integrity compromised")
+        raise ValueError("Message integrity compromised")
+    return decrypted_data
 
-def DH_handshake(key):
-    # acquire session key
-    session_key = b''
-    pub_key = RSA.importkey(key)
-    rsa_key = crypto.PKCS12
 
-    return session_key
+def session_sequence():
+    # generate convo sequence numbers 
+    # to prevent replay/reflection attacks
+    client_seq_bytes = get_random_bytes(32)
+    client_seq = int.from_bytes(client_seq_bytes,"big")
+    print("Client sequence: ", client_seq)
+    key_send = "Client".encode()+session_key
+    sendSeq = encrypt_and_hash(client_seq_bytes, key_send, session_hash)
+    s.send(sendSeq)
+
+    # receive server sequence
+    recSeq = s.recv(64)  
+    server_seq_bytes = decrypt_and_verify(recSeq, session_key, session_hash)
+    server_seq = int.from_bytes(server_seq_bytes, "big")
+
+    print("Server sequence: ", server_seq)
+    return client_seq, server_seq
+
+
+def upload_data(data, client_seq, server_seq):
+    # uploads data to server in blocks
+    print("\t...Uploading...")
+    block_size = 30
+    offset = 0
+    end = False
+
+    # key, seq config
+    client_seq += 1
+    server_seq += 1
+
+    key_send = "Client".encode() + session_key 
+    key_rec = "Server".encode() + session_key
+
+    while not end:
+        block = data[offset:offset + block_size]
+        count = 2
+        if len(block) % block_size != 0 or len(block) == 0:
+            end = True
+
+        block = (len(block)).to_bytes(2, "big") + block
+
+        dataSend = encrypt_and_hash(block, key_send + client_seq.to_bytes(32, "big"), session_hash+ client_seq.to_bytes(32, "big"))
+        s.send(dataSend)
+
+        recv_ack = s.recv(64)
+        ack = decrypt_and_verify(recv_ack, key_rec+server_seq.to_bytes(32,"big"), session_hash + server_seq.to_bytes(32,"big"))
+        ackUnpad = unpad(ack,32)
+        ackReady = ackUnpad.decode()
+
+        if(ackReady != "1"):
+            print(ackReady)
+            raise Exception("No Ack, block may be lost")
+
+        client_seq += 1
+        server_seq += 1
+        offset +=block_size
+    dint = 0
+    done = dint.to_bytes(2, "big")
+    dataSend = encrypt_and_hash(done, key_send + client_seq.to_bytes(32, "big"), session_hash+ client_seq.to_bytes(32, "big"))
+
+    s.send(dataSend)
+    recv_ack = s.recv(64)
+    ack = decrypt_and_verify(recv_ack, key_rec+server_seq.to_bytes(32,"big"), session_hash + server_seq.to_bytes(32,"big"))
+    ackUnpad = unpad(ack,32)
+    ackReady = ackUnpad.decode()
+
+    if(ackReady != "1"):
+        print(ackReady)
+        raise Exception("No Ack, Done may be lost")
+    
+    client_seq += 1
+    server_seq += 1
+
+    return client_seq, server_seq
+
+
+
+def upload(client_seq, server_seq):
+    # uploads data to server
+    file_n = input("\tType file to be uploaded : ")
+    if not os.path.isfile(file_n):
+        print("\t**File does not exist")
+    else:
+        up_file = open(file_n, 'rb')
+        uploadf = up_file.read()
+        opt_file = "1" + file_n
+        c_seq_bytes = client_seq.to_bytes(32, "big")
+        
+        key_send = "Client".encode() + session_key + c_seq_bytes
+        hash_send = session_hash + c_seq_bytes
+        send_opt = encrypt_and_hash(opt_file.encode(), key_send, hash_send)
+        s.send(send_opt)
+        
+        recv_ack = s.recv(64)
+        s_seq_bytes = server_seq.to_bytes(32, "big")
+        key_rec = "Server".encode() + session_key + s_seq_bytes
+        hash_rec = session_hash + s_seq_bytes
+        decrData = decrypt_and_verify(recv_ack, key_rec, hash_rec)
+        ackUnpad = unpad(decrData,32)
+        ack = ackUnpad.decode()
+
+        if(ack != "1"):
+            print(ack)
+            raise Exception("No Ack")
+
+        client_seq, server_seq = upload_data(uploadf, client_seq, server_seq)
+
+    return client_seq, server_seq
+def download_data(client_seq, server_seq):
+    # receives data in blocks
+    print("\t...Receiving...")
+    data = b''
+    
+    # key, seq config
+    client_seq += 1
+    server_seq += 1
+
+
+    while True:
+        rec = s.recv(64)
+        key_client = "Client".encode() + session_key + client_seq.to_bytes(32,"big")
+        key_server = "Server".encode() + session_key + server_seq.to_bytes(32,"big")
+        recDec = decrypt_and_verify(rec, key_server, session_hash + server_seq.to_bytes(32, "big"))
+        block_len = int.from_bytes(recDec[0:2], 'big')
+        block = recDec[2:2+block_len]
+        try:
+            if block_len == 0:
+                ack = b"1"
+                sendAck = encrypt_and_hash(ack, key_client, session_hash+client_seq.to_bytes(32,"big"))
+                s.send(sendAck)
+                            
+                client_seq += 1
+                server_seq += 1
+                break
+        except UnicodeDecodeError:
+            pass
+        ack = b"1"
+        sendAck = encrypt_and_hash(ack, key_client, session_hash+client_seq.to_bytes(32,"big"))
+        s.send(sendAck)
+
+        data += block
+
+        client_seq += 1
+        server_seq += 1
+
+    return data, client_seq, server_seq
+
+
+def download(client_seq, server_seq):
+    # downloads data from server
+    file_n = input("\tType file to be downloaded : ")
+    if not os.path.isfile(file_n):
+        print("\t**File does not exist")
+    else:
+        opt_file = "2" + file_n
+        c_seq_bytes = client_seq.to_bytes(32, "big")
+
+        key_send = "Client".encode() + session_key + c_seq_bytes
+        hash_send = session_hash + c_seq_bytes
+        send_opt = encrypt_and_hash(opt_file.encode(), key_send, hash_send)
+        s.send(send_opt)
+
+        recv_ack = s.recv(64)
+        s_seq_bytes = server_seq.to_bytes(32, "big")
+        key_rec = "Server".encode() + session_key + s_seq_bytes
+        hash_rec = session_hash + s_seq_bytes
+        decrData = decrypt_and_verify(recv_ack, key_rec, hash_rec)
+        ackUnpad = unpad(decrData,32)
+        ack = ackUnpad.decode()
+        
+        data, client_seq, server_seq = download_data(client_seq, server_seq)
+
+        client_f_name = "cli_"+file_n
+        file = open(client_f_name,"wb")
+        file.write(data)
+        file.close()
+    return client_seq, server_seq
+
+def close(client_seq, server_seq):
+    print("\tSending close")
+    opt_file = "3"
+    c_seq_bytes = client_seq.to_bytes(32, "big")
+
+    key_send = "Client".encode() + session_key + c_seq_bytes
+    hash_send = session_hash + c_seq_bytes
+    send_opt = encrypt_and_hash(opt_file.encode(), key_send, hash_send)
+    s.send(send_opt)
 
 if __name__ == "__main__":
     
@@ -143,13 +324,51 @@ if __name__ == "__main__":
 
     verify(file_name)
 
+    """"
 
-    print("Starting DH Handshake")
 
-    send(s, b"DH Start")
+    DIFFIE HELMAN HERE
 
-    s.send(encrypted)
 
-    endMsg = b'close'
-    send(s, b'close')
-    print('-Closing Connection-')
+    """
+
+    session_key = b'\xe7\xad\xa56\x1c\xcd\n\xd50#\x7f\xa5\x86<\x9e\xb7'
+    session = int.from_bytes(session_key,"big")
+    session_hash = (session+3).to_bytes(16,"big")
+    
+
+    print("Starting sequence establishment")
+    send(s, b"Sequence")
+    client_seq, server_seq = session_sequence()
+    print("Sequence established")
+    print("_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-")
+    while True:
+        print("Options:")
+        print("1) Upload to server")
+        print("2) Download from server")
+        print("3) Close connection")
+        
+        client_seq +=1
+        server_seq +=1
+
+        opt = int(input('Select an option : '))
+        if (opt == 1):
+            print("\tUpload to server")
+            
+            client_seq, server_seq = upload(client_seq, server_seq)
+            print("\tUpload Complete")
+        elif(opt == 2):
+            print("\tDownload from server")
+            
+            client_seq, server_seq = download(client_seq, server_seq)
+            print("\Download Complete")
+        elif(opt == 3):
+            print("\tClose connection")
+            close(client_seq, server_seq)
+            print('- Connection Closed -')
+            break
+        else:
+            print("\t**That is not a valid choice")
+        
+        print("Client sequence: ", client_seq)
+        print("Server sequence: ", server_seq)
