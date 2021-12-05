@@ -2,29 +2,43 @@
 
 import os
 import socket
+import struct
+
+from dotenv import load_dotenv
 from OpenSSL import crypto
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from Crypto.PublicKey import RSA
 from Crypto.Util.strxor import strxor
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Hash import SHA256
-import struct
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-HOST = '127.0.0.1'  # server IP address
-PORT = 65432        # server port
+from params import parameters
+
+load_dotenv()
+host = os.getenv('HOST')
+port = os.getenv('PORT')
+file_name = os.getenv('CLIENT_REC_FILE_NAME')
+pub_key = os.getenv('CLIENT_PUB_KEY')
+server_pub_key = os.get_env('SERVER_PUB_KEY')
+
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect((HOST, PORT))
+s.connect((host, port))
 
 session_key = b''
 session_hash = b''
 
 client_seq = 0
 server_seq = 0
+
+def secret_key(file):
+    with open('./'+file, 'r') as public_key_file:
+        pub_key=public_key_file.read()
+        clprivkey = crypto.load_publickey(crypto.FILETYPE_PEM, pub_key)
+    return clprivkey
+
 
 def verify(file):
     # verify received certificate
@@ -37,9 +51,9 @@ def verify(file):
     verified = verify_chain_of_trust(server_cert, ca_cert)
 
     if verified:
-        print('\t*Certificate verified*')
+        print('\t*Certificate verified.*')
     else:
-        print('\t*Certificate not verified*')
+        print('\t*Certificate could not be verified.*')
 
 
 def verify_chain_of_trust(server_pem, ca_cert_pem):
@@ -82,6 +96,8 @@ def receive(channel):
     except OSError as e:
         print (e)
         return False
+
+
 def send( connection, message ):
     try:
         connection.send(struct.pack("i", len(message)) + message)
@@ -100,6 +116,7 @@ def encrypt_and_hash(data, key, hash_key):
     hashed = SHA256.new(data+hash_key).digest()
 
     return encr+hashed
+
 
 def decrypt_and_verify(data, key, hash_key):
     # decrypts value and checks hash value to verify integrity
@@ -192,7 +209,6 @@ def upload_data(data, client_seq, server_seq):
     return client_seq, server_seq
 
 
-
 def upload(client_seq, server_seq):
     # uploads data to server
     file_n = input("\tType file to be uploaded : ")
@@ -224,6 +240,8 @@ def upload(client_seq, server_seq):
         client_seq, server_seq = upload_data(uploadf, client_seq, server_seq)
 
     return client_seq, server_seq
+
+
 def download_data(client_seq, server_seq):
     # receives data in blocks
     print("\t...Receiving...")
@@ -294,6 +312,7 @@ def download(client_seq, server_seq):
         file.close()
     return client_seq, server_seq
 
+
 def close(client_seq, server_seq):
     print("\tSending close")
     opt_file = "3"
@@ -304,9 +323,22 @@ def close(client_seq, server_seq):
     send_opt = encrypt_and_hash(opt_file.encode(), key_send, hash_send)
     s.send(send_opt)
 
+
+#In our implementation of Diffie Hellman, the parameters are reused but a new private key is generated every time 
+#a message needs to be exchanged to ensure forward secrecy.
+def diffie_hellman(params, server_pub):
+    client_private_key = params.generate_private_key()
+    shared_secret = client_private_key.exchange(server_pub) 
+    session_key = HKDF(
+    algorithm=hashes.SHA256(),
+    length=32,
+    salt=None,
+    info=b'session key',
+    ).derive(shared_secret)
+    return session_key
+
+
 if __name__ == "__main__":
-    
-    file_name = 'ser-cert.pem'
     
     # Authentication
     send(s, b'Certificate request')
@@ -324,15 +356,7 @@ if __name__ == "__main__":
 
     verify(file_name)
 
-    """"
-
-
-    DIFFIE HELMAN HERE
-
-
-    """
-
-    session_key = b'\xe7\xad\xa56\x1c\xcd\n\xd50#\x7f\xa5\x86<\x9e\xb7'
+    session_key = diffie_hellman(parameters, server_pub_key)
     session = int.from_bytes(session_key,"big")
     session_hash = (session+3).to_bytes(16,"big")
     
@@ -352,21 +376,23 @@ if __name__ == "__main__":
         server_seq +=1
 
         opt = int(input('Select an option : '))
+
         if (opt == 1):
             print("\tUpload to server")
-            
             client_seq, server_seq = upload(client_seq, server_seq)
             print("\tUpload Complete")
+
         elif(opt == 2):
             print("\tDownload from server")
-            
             client_seq, server_seq = download(client_seq, server_seq)
             print("\Download Complete")
+
         elif(opt == 3):
             print("\tClose connection")
             close(client_seq, server_seq)
             print('- Connection Closed -')
             break
+
         else:
             print("\t**That is not a valid choice")
         
