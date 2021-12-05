@@ -15,14 +15,12 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from params import parameters
+from params import client, server
 
 load_dotenv()
 host = os.getenv('HOST')
 port = os.getenv('PORT')
 file_name = os.getenv('CLIENT_REC_FILE_NAME')
-pub_key = os.getenv('CLIENT_PUB_KEY')
-server_pub_key = os.get_env('SERVER_PUB_KEY')
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((host, port))
@@ -326,9 +324,11 @@ def close(client_seq, server_seq):
 
 #In our implementation of Diffie Hellman, the parameters are reused but a new private key is generated every time 
 #a message needs to be exchanged to ensure forward secrecy.
-def diffie_hellman(params, server_pub):
-    client_private_key = params.generate_private_key()
-    shared_secret = client_private_key.exchange(server_pub) 
+def diffie_hellman():
+    client_private_key = client()
+    server_private_key = server()
+
+    shared_secret = client_private_key.exchange(server_private_key.public_key()) 
     session_key = HKDF(
     algorithm=hashes.SHA256(),
     length=32,
@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
     verify(file_name)
 
-    session_key = diffie_hellman(parameters, server_pub_key)
+    session_key = diffie_hellman()
     session = int.from_bytes(session_key,"big")
     session_hash = (session+3).to_bytes(16,"big")
     

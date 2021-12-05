@@ -1,7 +1,7 @@
-## CS6349 (Network Security) – Fall 2021 Programming Project
+# CS6349 (Network Security) – Fall 2021 Programming Project
 
 
-# How to run
+## How to run
 1- Navigate to CS6349-PROJECT directory and activate virtualenv from your shell.
 2- Run this command on the shell
     pip install -r requirements.txt
@@ -11,6 +11,6 @@
 4- You will now be able to exchange information securely between client and server.
 
 
-# Creators
+## Creators
 Zoraida Vences - zxv160130
 Soumya Mukhija - sxm200134
