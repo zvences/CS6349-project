@@ -19,10 +19,13 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from params import client, server
 
-
+'''
 load_dotenv()
 host = os.getenv('HOST')    
 port = os.getenv('PORT')  
+'''
+host = '127.0.0.1'    
+port = 65432
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.bind((host, port))
@@ -258,11 +261,6 @@ def diffie_hellman():
 if __name__ == "__main__":
     encrypted = b''
     
-    session_key = diffie_hellman()
-    session = int.from_bytes(session_key,"big")
-    session_hash = (session+3).to_bytes(16,"big")
-    client_seq = 0
-    server_seq = 0
 
     while True:
         data = receive(conn)
@@ -291,6 +289,11 @@ if __name__ == "__main__":
             print("Sequence established")
             break
     
+    session_key = diffie_hellman()
+    session = int.from_bytes(session_key,"big")
+    session_hash = (session+3).to_bytes(16,"big")
+    client_seq = 0
+    server_seq = 0
     print("_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-")
     while True:
         data = conn.recv(64)
@@ -320,10 +323,3 @@ if __name__ == "__main__":
         else:
             conn.send(b"received :)")
         
-        
-        
-
-
-
-
-

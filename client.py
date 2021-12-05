@@ -16,11 +16,17 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from params import client, server
-
+'''
 load_dotenv()
 host = os.getenv('HOST')
 port = os.getenv('PORT')
 file_name = os.getenv('CLIENT_REC_FILE_NAME')
+'''
+host = '127.0.0.1'
+port = 65432
+file_name = 'ser-cert.pem'
+pub_key = 'client-pubkey.pem'
+server_pub_key = 'server-pubkey.pem'
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((host, port))
@@ -356,15 +362,16 @@ if __name__ == "__main__":
 
     verify(file_name)
 
-    session_key = diffie_hellman()
-    session = int.from_bytes(session_key,"big")
-    session_hash = (session+3).to_bytes(16,"big")
-    
 
     print("Starting sequence establishment")
     send(s, b"Sequence")
     client_seq, server_seq = session_sequence()
     print("Sequence established")
+
+    session_key = diffie_hellman()
+    session = int.from_bytes(session_key,"big")
+    session_hash = (session+3).to_bytes(16,"big")
+    
     print("_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-")
     while True:
         print("Options:")
