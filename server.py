@@ -18,7 +18,6 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from params import diffie_hellman
 
-
 load_dotenv()
 host = os.getenv('HOST')    
 port = os.getenv('PORT')  
