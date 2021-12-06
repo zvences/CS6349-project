@@ -12,12 +12,11 @@ from Crypto.Util.strxor import strxor
 from dotenv import load_dotenv
 
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from params import client, server
+from params import diffie_hellman
 
 '''
 load_dotenv()
@@ -240,22 +239,6 @@ def download(f_name, client_seq, server_seq):
     client_seq, server_seq = download_data(uploadf, client_seq, server_seq)
 
     return client_seq, server_seq
-
-
-#In our implementation of Diffie Hellman, the parameters are reused but a new private key is generated every time 
-#a message needs to be exchanged to ensure forward secrecy.
-def diffie_hellman():
-    client_private_key = client()
-    server_private_key = server()
-
-    shared_secret = server_private_key.exchange(client_private_key.public_key()) 
-    session_key = HKDF(
-    algorithm=hashes.SHA256(),
-    length=32,
-    salt=None,
-    info=b'session key',
-    ).derive(shared_secret)
-    return session_key
 
 
 if __name__ == "__main__":
