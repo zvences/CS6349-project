@@ -12,10 +12,9 @@ from Crypto.Util.Padding import pad, unpad
 from Crypto.Hash import SHA256
 
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from params import client, server
+from params import diffie_hellman
 
 load_dotenv()
 host = os.getenv('HOST')
@@ -320,22 +319,6 @@ def close(client_seq, server_seq):
     hash_send = session_hash + c_seq_bytes
     send_opt = encrypt_and_hash(opt_file.encode(), key_send, hash_send)
     s.send(send_opt)
-
-
-#In our implementation of Diffie Hellman, the parameters are reused but a new private key is generated every time 
-#a message needs to be exchanged to ensure forward secrecy.
-def diffie_hellman():
-    client_private_key = client()
-    server_private_key = server()
-
-    shared_secret = client_private_key.exchange(server_private_key.public_key()) 
-    session_key = HKDF(
-    algorithm=hashes.SHA256(),
-    length=32,
-    salt=None,
-    info=b'session key',
-    ).derive(shared_secret)
-    return session_key
 
 
 if __name__ == "__main__":
