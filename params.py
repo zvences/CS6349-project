@@ -13,8 +13,9 @@ session_key = HKDF(
     salt=None,
     info=b'session key',
     ).derive(shared_secret)
+session_key_int = int.from_bytes(session_key, byteorder='big')
 
 #In our implementation of Diffie Hellman, the parameters are reused but a new private key is generated every time 
 #a message needs to be exchanged to ensure forward secrecy.
 def diffie_hellman():
-    return session_key
+    return session_key_int
